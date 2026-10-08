@@ -396,18 +396,26 @@ extension CtcKeywordSpotter {
                 for v in 0..<logits.count { logits[v] = buffer[frameOffset + v * vocabStride] }
             }
         case .float16:
-            array.withUnsafeBufferPointer(ofType: Float16.self) { buffer in
-                for v in 0..<logits.count { logits[v] = Float(buffer[frameOffset + v * vocabStride]) }
+            if #available(macOS 15.0, iOS 18.0, *) {
+                array.withUnsafeBufferPointer(ofType: Float16.self) { buffer in
+                    for v in 0..<logits.count { logits[v] = Float(buffer[frameOffset + v * vocabStride]) }
+                }
+            } else {
+                readLogitsByIndex(from: array, into: &logits, frameOffset: frameOffset)
             }
         default:
-            // The linear subscript is a logical index, not a memory offset, so other
-            // types keep the original per-index read.
-            let rank = array.shape.count
-            let t = rank == 3 ? frameOffset / array.strides[1].intValue : frameOffset / array.strides[3].intValue
-            for v in 0..<logits.count {
-                let index: [NSNumber] = rank == 3 ? [0, t, v] as [NSNumber] : [0, v, 0, t] as [NSNumber]
-                logits[v] = array[index].floatValue
-            }
+            readLogitsByIndex(from: array, into: &logits, frameOffset: frameOffset)
+        }
+    }
+
+    /// The original per-index read, for types without a buffer path. The linear
+    /// subscript is a logical index, not a memory offset, so it cannot be used here.
+    private func readLogitsByIndex(from array: MLMultiArray, into logits: inout [Float], frameOffset: Int) {
+        let isRank3 = array.shape.count == 3
+        let t = frameOffset / array.strides[isRank3 ? 1 : 3].intValue
+        for v in 0..<logits.count {
+            let index: [NSNumber] = isRank3 ? [0, t, v] as [NSNumber] : [0, v, 0, t] as [NSNumber]
+            logits[v] = array[index].floatValue
         }
     }
 
